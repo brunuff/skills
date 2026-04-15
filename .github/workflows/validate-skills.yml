@@ -1,0 +1,106 @@
+name: validate-skills
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "**/SKILL.md"
+      - ".github/workflows/validate-skills.yml"
+  pull_request:
+    paths:
+      - "**/SKILL.md"
+      - ".github/workflows/validate-skills.yml"
+
+jobs:
+  frontmatter:
+    name: Validate SKILL.md frontmatter
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install PyYAML
+        run: pip install pyyaml
+
+      - name: Validate frontmatter
+        run: |
+          python - <<'PY'
+          import pathlib
+          import sys
+
+          import yaml
+
+          REQUIRED = ("name", "description")
+          errors: list[str] = []
+          checked = 0
+
+          for path in sorted(pathlib.Path(".").rglob("SKILL.md")):
+              checked += 1
+              text = path.read_text(encoding="utf-8")
+
+              if not text.startswith("---"):
+                  errors.append(f"{path}: missing YAML frontmatter (must start with ---)")
+                  continue
+
+              parts = text.split("---", 2)
+              if len(parts) < 3:
+                  errors.append(f"{path}: unterminated frontmatter block")
+                  continue
+
+              try:
+                  meta = yaml.safe_load(parts[1]) or {}
+              except yaml.YAMLError as exc:
+                  errors.append(f"{path}: malformed YAML ({exc})")
+                  continue
+
+              if not isinstance(meta, dict):
+                  errors.append(f"{path}: frontmatter must be a mapping")
+                  continue
+
+              for field in REQUIRED:
+                  value = meta.get(field)
+                  if not isinstance(value, str) or not value.strip():
+                      errors.append(f"{path}: missing or empty required field '{field}'")
+
+              name = meta.get("name")
+              if isinstance(name, str) and name.strip():
+                  expected = path.parent.name
+                  if name.strip() != expected:
+                      errors.append(
+                          f"{path}: frontmatter name '{name}' does not match directory '{expected}'"
+                      )
+
+          print(f"Checked {checked} SKILL.md file(s).")
+          if errors:
+              print("\nFrontmatter validation failed:")
+              for err in errors:
+                  print(f"  - {err}")
+              sys.exit(1)
+          print("All SKILL.md frontmatter is valid.")
+          PY
+
+  markdownlint:
+    name: Lint SKILL.md markdown
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Write markdownlint config
+        run: |
+          cat > .markdownlint.jsonc <<'JSON'
+          {
+            "default": true,
+            "MD013": false,
+            "MD033": false,
+            "MD041": false,
+            "MD024": { "siblings_only": true }
+          }
+          JSON
+
+      - uses: DavidAnson/markdownlint-cli2-action@v16
+        with:
+          globs: "**/SKILL.md"
+          config: ".markdownlint.jsonc"
