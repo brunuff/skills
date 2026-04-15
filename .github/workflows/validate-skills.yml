@@ -4,11 +4,11 @@ on:
   push:
     branches: [main]
     paths:
-      - "**/SKILL.md"
+      - "skills/**/SKILL.md"
       - ".github/workflows/validate-skills.yml"
   pull_request:
     paths:
-      - "**/SKILL.md"
+      - "skills/**/SKILL.md"
       - ".github/workflows/validate-skills.yml"
 
 jobs:
@@ -37,7 +37,12 @@ jobs:
           errors: list[str] = []
           checked = 0
 
-          for path in sorted(pathlib.Path(".").rglob("SKILL.md")):
+          skills_root = pathlib.Path("skills")
+          if not skills_root.is_dir():
+              print("No skills/ directory — nothing to validate.")
+              sys.exit(0)
+
+          for path in sorted(skills_root.glob("*/SKILL.md")):
               checked += 1
               text = path.read_text(encoding="utf-8")
 
@@ -73,7 +78,7 @@ jobs:
                           f"{path}: frontmatter name '{name}' does not match directory '{expected}'"
                       )
 
-          print(f"Checked {checked} SKILL.md file(s).")
+          print(f"Checked {checked} SKILL.md file(s) under skills/.")
           if errors:
               print("\nFrontmatter validation failed:")
               for err in errors:
@@ -102,5 +107,5 @@ jobs:
 
       - uses: DavidAnson/markdownlint-cli2-action@v16
         with:
-          globs: "**/SKILL.md"
+          globs: "skills/*/SKILL.md"
           config: ".markdownlint.jsonc"
