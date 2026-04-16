@@ -1,0 +1,116 @@
+name: validate-skills
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "skills/**/SKILL.md"
+      - ".github/workflows/validate-skills.yml"
+  pull_request:
+    paths:
+      - "skills/**/SKILL.md"
+      - ".github/workflows/validate-skills.yml"
+
+jobs:
+  frontmatter:
+    name: Validate SKILL.md frontmatter
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Validate frontmatter
+        run: |
+          python - <<'PY'
+          import pathlib
+          import re
+          import sys
+
+          # Regex-based frontmatter parser. We deliberately avoid PyYAML because
+          # Anthropic SKILL.md descriptions frequently contain "word: " inside
+          # plain scalars (e.g. "TRIGGER when: code imports anthropic"), which
+          # strict YAML parsers reject. The skills loader in practice uses
+          # line-oriented extraction of top-level `key: value` pairs.
+          FRONTMATTER_RE = re.compile(r"^---\r?\n(.*?)\r?\n---", re.DOTALL)
+          FIELD_RE = re.compile(r"^(?P<key>[A-Za-z_][A-Za-z0-9_-]*)\s*:\s*(?P<value>.*)$")
+
+          errors = []
+          checked = 0
+
+          skills_root = pathlib.Path("skills")
+          if not skills_root.is_dir():
+              print("No skills/ directory - nothing to validate.")
+              sys.exit(0)
+
+          for path in sorted(skills_root.glob("*/SKILL.md")):
+              checked += 1
+              text = path.read_text(encoding="utf-8")
+
+              match = FRONTMATTER_RE.match(text)
+              if not match:
+                  errors.append(f"{path}: missing or unterminated YAML frontmatter block")
+                  continue
+
+              fields = {}
+              for line in match.group(1).splitlines():
+                  stripped_line = line.strip()
+                  if not stripped_line or stripped_line.startswith("#"):
+                      continue
+                  # Only capture top-level fields (no leading whitespace).
+                  if line[:1] in (" ", "\t"):
+                      continue
+                  field_match = FIELD_RE.match(line)
+                  if field_match:
+                      fields[field_match.group("key")] = field_match.group("value").strip()
+
+              def clean(value):
+                  return value.strip().strip('"').strip("'").strip()
+
+              for field in ("name", "description"):
+                  if not clean(fields.get(field, "")):
+                      errors.append(f"{path}: missing or empty required field '{field}'")
+
+              name_value = clean(fields.get("name", ""))
+              if name_value:
+                  expected = path.parent.name
+                  if name_value != expected:
+                      errors.append(
+                          f"{path}: frontmatter name '{name_value}' does not match directory '{expected}'"
+                      )
+
+          print(f"Checked {checked} SKILL.md file(s) under skills/.")
+          if errors:
+              print("\nFrontmatter validation failed:")
+              for err in errors:
+                  print(f"  - {err}")
+              sys.exit(1)
+          print("All SKILL.md frontmatter is valid.")
+          PY
+
+  markdownlint:
+    name: Lint SKILL.md markdown
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Write markdownlint config
+        run: |
+          cat > .markdownlint.jsonc <<'JSON'
+          {
+            "default": false,
+            "MD018": true,
+            "MD019": true,
+            "MD037": true,
+            "MD038": true,
+            "MD042": true,
+            "MD045": true
+          }
+          JSON
+
+      - uses: DavidAnson/markdownlint-cli2-action@v16
+        with:
+          globs: "skills/*/SKILL.md"
+          config: ".markdownlint.jsonc"
